@@ -35,6 +35,7 @@ try:
         status_data = status_response.json()
         api_connected = True
         api_status = status_data
+        st.sidebar.success("✓ API Connected")
         
         if 'websocket_stats' in status_data:
             ws_stats = status_data['websocket_stats']
@@ -95,7 +96,11 @@ with col4:
     rolling_window = st.slider("Rolling Window", 5, 100, 20, key="window")
 
 with col5:
-    refresh_rate = st.slider("Refresh Rate (seconds)", 1, 10, 2, key="refresh")
+    auto_refresh = st.checkbox("Auto-refresh", value=False, key="auto_refresh")
+    if auto_refresh:
+        refresh_rate = st.slider("Refresh Rate (seconds)", 1, 10, 2, key="refresh")
+    else:
+        refresh_rate = None
 
 tab1, tab2, tab3, tab4 = st.tabs(["Live Data", "Analytics", "Alerts", "Export"])
 
@@ -185,7 +190,7 @@ with tab2:
     
     try:
         response = requests.get(
-            f"{API_URL}/analytics/{symbol_x}/{symbol_y}/{timeframe}?limit=100",
+            f"{API_URL}/analytics/{symbol_x}/{symbol_y}/tick?limit=100",
             timeout=5
         )
         
@@ -195,6 +200,9 @@ with tab2:
             df_analytics = pd.DataFrame(analytics)
             df_analytics['timestamp'] = pd.to_datetime(df_analytics['computed_at'], unit='ms')
             df_analytics = df_analytics.sort_values('timestamp')
+            
+            st.write(f"**Debug:** Found {len(df_analytics)} analytics records")
+            st.write("**Columns:**", list(df_analytics.columns))
             
             fig = make_subplots(
                 rows=3, cols=1,
@@ -213,31 +221,37 @@ with tab2:
                 row=1, col=1
             )
             
-            fig.add_trace(
-                go.Scatter(
-                    x=df_analytics['timestamp'],
-                    y=df_analytics['z_score'],
-                    mode='lines',
-                    name='Z-Score',
-                    line=dict(color='green')
-                ),
-                row=2, col=1
-            )
+            if 'z_score' in df_analytics.columns and df_analytics['z_score'].notna().any():
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_analytics['timestamp'],
+                        y=df_analytics['z_score'],
+                        mode='lines',
+                        name='Z-Score',
+                        line=dict(color='green')
+                    ),
+                    row=2, col=1
+                )
+            else:
+                st.warning("Z-Score data not available in results")
             
             fig.add_hline(y=2, line_dash="dash", line_color="red", row=2, col=1)
             fig.add_hline(y=-2, line_dash="dash", line_color="red", row=2, col=1)
             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=2, col=1)
             
-            fig.add_trace(
-                go.Scatter(
-                    x=df_analytics['timestamp'],
-                    y=df_analytics['rolling_corr'],
-                    mode='lines',
-                    name='Correlation',
-                    line=dict(color='purple')
-                ),
-                row=3, col=1
-            )
+            if 'rolling_corr' in df_analytics.columns and df_analytics['rolling_corr'].notna().any():
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_analytics['timestamp'],
+                        y=df_analytics['rolling_corr'],
+                        mode='lines',
+                        name='Correlation',
+                        line=dict(color='purple')
+                    ),
+                    row=3, col=1
+                )
+            else:
+                st.warning("Correlation data not available in results")
             
             fig.update_layout(height=800, showlegend=True)
             
@@ -248,24 +262,66 @@ with tab2:
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.metric("Hedge Ratio", f"{latest['hedge_ratio']:.4f}" if pd.notna(latest['hedge_ratio']) else "N/A")
-                st.metric("Spread", f"{latest['spread']:.4f}" if pd.notna(latest['spread']) else "N/A")
+                hedge_ratio_val = latest.get('hedge_ratio', latest.get('hedge_ratio'))
+                spread_val = latest.get('spread', latest.get('spread_last'))
+                
+                st.metric("Hedge Ratio", f"{hedge_ratio_val:.4f}" if pd.notna(hedge_ratio_val) else "N/A")
+                st.metric("Spread", f"{spread_val:.4f}" if pd.notna(spread_val) else "N/A")
             
             with col2:
-                z_score_value = latest['z_score']
-                st.metric("Z-Score", f"{z_score_value:.4f}" if pd.notna(z_score_value) else "N/A")
-                st.metric("Correlation", f"{latest['rolling_corr']:.4f}" if pd.notna(latest['rolling_corr']) else "N/A")
+                z_score_val = latest.get('z_score', latest.get('z_score_last'))
+                corr_val = latest.get('rolling_corr', latest.get('correlation'))
+                
+                st.metric("Z-Score", f"{z_score_val:.4f}" if pd.notna(z_score_val) else "Computing...")
+                st.metric("Correlation", f"{corr_val:.4f}" if pd.notna(corr_val) else "Computing...")
             
             with col3:
-                st.metric("ADF Statistic", f"{latest['adf_stat']:.4f}" if pd.notna(latest['adf_stat']) else "N/A")
-                st.metric("P-Value", f"{latest['p_value']:.4f}" if pd.notna(latest['p_value']) else "N/A")
+                adf_stat = latest.get('adf_stat', latest.get('adf_statistic'))
+                p_val = latest.get('p_value', latest.get('adf_p_value'))
+                
+                if pd.notna(adf_stat) and pd.notna(p_val):
+                    st.metric("ADF Statistic", f"{adf_stat:.4f}")
+                    st.metric("P-Value", f"{p_val:.4f}")
+                    
+                    if p_val < 0.05:
+                        st.success("✓ Stationary")
+                    else:
+                        st.warning("⚠ Non-Stationary")
+                else:
+                    st.info("ADF Test: Computing...")
+                    st.caption("Need more data")
             
             st.subheader("Statistics Summary")
+            
+            st.write(f"**Data Points:** {len(df_analytics)}")
+            st.write(f"**Time Range:** {df_analytics['timestamp'].min()} to {df_analytics['timestamp'].max()}")
+            
             summary_df = df_analytics[['hedge_ratio', 'spread', 'z_score', 'rolling_corr']].describe()
             st.dataframe(summary_df)
+            
+            st.subheader("ADF Test Details")
+            if pd.notna(latest['adf_stat']):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write("**Test Result:**")
+                    st.write(f"- ADF Statistic: {latest['adf_stat']:.4f}")
+                    st.write(f"- P-Value: {latest['p_value']:.4f}")
+                    
+                with col_b:
+                    st.write("**Interpretation:**")
+                    if latest['p_value'] < 0.01:
+                        st.success("Strong evidence of stationarity (p < 0.01)")
+                    elif latest['p_value'] < 0.05:
+                        st.success("Evidence of stationarity (p < 0.05)")
+                    elif latest['p_value'] < 0.10:
+                        st.warning("Weak evidence of stationarity (p < 0.10)")
+                    else:
+                        st.error("No evidence of stationarity (p ≥ 0.10)")
+            else:
+                st.info("ADF test requires at least 10 spread observations. Keep collecting data...")
         
         else:
-            st.info(f"No analytics data available for {symbol_x}/{symbol_y} on {timeframe} timeframe. Analytics require sufficient data accumulation (minimum {rolling_window} periods).")
+            st.info(f"No analytics data available for {symbol_x}/{symbol_y}. Analytics require sufficient data accumulation (minimum {rolling_window} periods). Current data in system: check sidebar for buffer status.")
     
     except requests.exceptions.ConnectionError:
         st.error("Cannot connect to API server. Make sure app.py is running.")
@@ -385,6 +441,6 @@ with tab4:
         except Exception as e:
             st.error(f"Error exporting data: {e}")
 
-if st.sidebar.checkbox("Auto-refresh", value=True):
+if auto_refresh and refresh_rate:
     time.sleep(refresh_rate)
     st.rerun()
