@@ -8,3 +8,4 @@ debug_data.py
 market_data.db
 data/
 clean.py
+diagrams/
