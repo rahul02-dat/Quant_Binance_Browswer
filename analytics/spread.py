@@ -9,7 +9,7 @@ class SpreadAnalytics:
     @staticmethod
     def calculate_pair_analytics(prices_x: pd.Series, prices_y: pd.Series, 
                                  window: int = 20) -> Dict:
-        if len(prices_x) < window or len(prices_y) < window:
+        if len(prices_x) < 5 or len(prices_y) < 5:
             return {}
         
         hedge_ratio = Regression.calculate_hedge_ratio(prices_y, prices_x)
@@ -19,23 +19,48 @@ class SpreadAnalytics:
         
         spread = Regression.calculate_spread(prices_y, prices_x, hedge_ratio)
         
-        if spread.empty:
+        if spread.empty or len(spread) < 5:
             return {}
         
-        z_score = Statistics.calculate_z_score(spread, window)
-        rolling_corr = Statistics.calculate_rolling_correlation(prices_x, prices_y, window)
+        # Calculate Z-Score directly from recent data
+        spread_recent = spread.iloc[-max(window, 5):]
+        spread_mean = float(spread_recent.mean())
+        spread_std = float(spread_recent.std())
+        
+        z_score_last = 0.0
+        try:
+            if spread_std > 0:
+                z_score_last = float((spread.iloc[-1] - spread_mean) / spread_std)
+                if not pd.notna(z_score_last):
+                    z_score_last = 0.0
+            else:
+                z_score_last = 0.0
+        except Exception as e:
+            z_score_last = 0.0
+        
+        # Calculate correlation directly from recent prices
+        prices_x_recent = prices_x.iloc[-max(window, 5):]
+        prices_y_recent = prices_y.iloc[-max(window, 5):]
+        
+        corr_last = 1.0
+        try:
+            if len(prices_x_recent) > 1 and len(prices_y_recent) > 1:
+                corr_val = prices_x_recent.corr(prices_y_recent)
+                corr_last = float(corr_val) if pd.notna(corr_val) else 1.0
+        except Exception as e:
+            corr_last = 1.0
         
         adf_result = Stationarity.adf_test(spread)
         
         analytics = {
             'hedge_ratio': float(hedge_ratio),
-            'spread_mean': float(spread.mean()),
-            'spread_std': float(spread.std()),
+            'spread_mean': float(spread_mean),
+            'spread_std': float(spread_std),
             'spread_last': float(spread.iloc[-1]) if len(spread) > 0 else None,
-            'z_score_last': float(z_score.iloc[-1]) if len(z_score) > 0 else None,
-            'z_score_mean': float(z_score.mean()) if len(z_score) > 0 else None,
-            'z_score_std': float(z_score.std()) if len(z_score) > 0 else None,
-            'correlation': float(rolling_corr.iloc[-1]) if len(rolling_corr) > 0 else None,
+            'z_score_last': z_score_last,
+            'z_score_mean': float(spread_recent.mean()),
+            'z_score_std': float(spread_std),
+            'correlation': corr_last,
             'adf_statistic': adf_result.get('adf_statistic'),
             'adf_p_value': adf_result.get('p_value'),
             'is_stationary': adf_result.get('is_stationary', False)

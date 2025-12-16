@@ -96,9 +96,9 @@ with col4:
     rolling_window = st.slider("Rolling Window", 5, 100, 20, key="window")
 
 with col5:
-    auto_refresh = st.checkbox("Auto-refresh", value=False, key="auto_refresh")
+    auto_refresh = st.checkbox("Auto-refresh", value=True, key="auto_refresh")
     if auto_refresh:
-        refresh_rate = st.slider("Refresh Rate (seconds)", 1, 10, 2, key="refresh")
+        refresh_rate = st.slider("Refresh Rate (seconds)", 0.5, 5.0, 1.0, key="refresh")
     else:
         refresh_rate = None
 
@@ -201,9 +201,6 @@ with tab2:
             df_analytics['timestamp'] = pd.to_datetime(df_analytics['computed_at'], unit='ms')
             df_analytics = df_analytics.sort_values('timestamp')
             
-            st.write(f"**Debug:** Found {len(df_analytics)} analytics records")
-            st.write("**Columns:**", list(df_analytics.columns))
-            
             fig = make_subplots(
                 rows=3, cols=1,
                 subplot_titles=('Spread', 'Z-Score', 'Rolling Correlation'),
@@ -232,8 +229,6 @@ with tab2:
                     ),
                     row=2, col=1
                 )
-            else:
-                st.warning("Z-Score data not available in results")
             
             fig.add_hline(y=2, line_dash="dash", line_color="red", row=2, col=1)
             fig.add_hline(y=-2, line_dash="dash", line_color="red", row=2, col=1)
@@ -250,8 +245,6 @@ with tab2:
                     ),
                     row=3, col=1
                 )
-            else:
-                st.warning("Correlation data not available in results")
             
             fig.update_layout(height=800, showlegend=True)
             
@@ -262,58 +255,55 @@ with tab2:
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                hedge_ratio_val = latest.get('hedge_ratio', latest.get('hedge_ratio'))
-                spread_val = latest.get('spread', latest.get('spread_last'))
-                
-                st.metric("Hedge Ratio", f"{hedge_ratio_val:.4f}" if pd.notna(hedge_ratio_val) else "N/A")
-                st.metric("Spread", f"{spread_val:.4f}" if pd.notna(spread_val) else "N/A")
+                hr = latest.get('hedge_ratio')
+                sp = latest.get('spread')
+                st.metric("Hedge Ratio", f"{float(hr):.4f}" if pd.notna(hr) else "Computing...")
+                st.metric("Spread", f"{float(sp):.4f}" if pd.notna(sp) else "Computing...")
             
             with col2:
-                z_score_val = latest.get('z_score', latest.get('z_score_last'))
-                corr_val = latest.get('rolling_corr', latest.get('correlation'))
-                
-                st.metric("Z-Score", f"{z_score_val:.4f}" if pd.notna(z_score_val) else "Computing...")
-                st.metric("Correlation", f"{corr_val:.4f}" if pd.notna(corr_val) else "Computing...")
+                zs = latest.get('z_score')
+                cr = latest.get('rolling_corr')
+                st.metric("Z-Score", f"{float(zs):.4f}" if pd.notna(zs) else "Computing...")
+                st.metric("Correlation", f"{float(cr):.4f}" if pd.notna(cr) else "Computing...")
             
             with col3:
-                adf_stat = latest.get('adf_stat', latest.get('adf_statistic'))
-                p_val = latest.get('p_value', latest.get('adf_p_value'))
+                adf = latest.get('adf_stat')
+                pv = latest.get('p_value')
                 
-                if pd.notna(adf_stat) and pd.notna(p_val):
-                    st.metric("ADF Statistic", f"{adf_stat:.4f}")
-                    st.metric("P-Value", f"{p_val:.4f}")
-                    
-                    if p_val < 0.05:
-                        st.success("✓ Stationary")
-                    else:
-                        st.warning("⚠ Non-Stationary")
+                if pd.notna(adf) and pd.notna(pv):
+                    st.metric("ADF Statistic", f"{float(adf):.4f}")
+                    st.metric("P-Value", f"{float(pv):.4f}")
                 else:
-                    st.info("ADF Test: Computing...")
-                    st.caption("Need more data")
+                    st.info("ADF Test computing...")
+                    st.caption("Needs more data")
             
             st.subheader("Statistics Summary")
             
             st.write(f"**Data Points:** {len(df_analytics)}")
             st.write(f"**Time Range:** {df_analytics['timestamp'].min()} to {df_analytics['timestamp'].max()}")
             
-            summary_df = df_analytics[['hedge_ratio', 'spread', 'z_score', 'rolling_corr']].describe()
-            st.dataframe(summary_df)
+            cols_to_summarize = [col for col in ['hedge_ratio', 'spread', 'z_score', 'rolling_corr'] if col in df_analytics.columns]
+            if cols_to_summarize:
+                summary_df = df_analytics[cols_to_summarize].describe()
+                st.dataframe(summary_df)
             
             st.subheader("ADF Test Details")
-            if pd.notna(latest['adf_stat']):
+            latest = df_analytics.iloc[-1]
+            if pd.notna(latest.get('adf_stat')):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.write("**Test Result:**")
-                    st.write(f"- ADF Statistic: {latest['adf_stat']:.4f}")
-                    st.write(f"- P-Value: {latest['p_value']:.4f}")
+                    st.write(f"- ADF Statistic: {float(latest['adf_stat']):.4f}")
+                    st.write(f"- P-Value: {float(latest['p_value']):.4f}")
                     
                 with col_b:
                     st.write("**Interpretation:**")
-                    if latest['p_value'] < 0.01:
+                    p_val = float(latest['p_value'])
+                    if p_val < 0.01:
                         st.success("Strong evidence of stationarity (p < 0.01)")
-                    elif latest['p_value'] < 0.05:
+                    elif p_val < 0.05:
                         st.success("Evidence of stationarity (p < 0.05)")
-                    elif latest['p_value'] < 0.10:
+                    elif p_val < 0.10:
                         st.warning("Weak evidence of stationarity (p < 0.10)")
                     else:
                         st.error("No evidence of stationarity (p ≥ 0.10)")
@@ -410,7 +400,7 @@ with tab4:
                     st.stop()
             else:
                 response = requests.get(
-                    f"{API_URL}/analytics/{symbol_x}/{symbol_y}/{timeframe}?limit=1000",
+                    f"{API_URL}/analytics/{symbol_x}/{symbol_y}/tick?limit=1000",
                     timeout=5
                 )
                 if response.status_code == 200:

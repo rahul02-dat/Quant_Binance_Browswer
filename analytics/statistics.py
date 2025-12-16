@@ -43,7 +43,10 @@ class Statistics:
         if len(df) < window:
             return pd.Series()
         
-        return df['x'].rolling(window=window).corr(df['y'])
+        corr = df['x'].rolling(window=window).corr(df['y'])
+        # Drop NaN values but keep the series intact
+        corr_clean = corr.dropna()
+        return corr_clean if len(corr_clean) > 0 else corr
     
     @staticmethod
     def calculate_rolling_mean_std(series: pd.Series, window: int = 20) -> tuple:
@@ -62,5 +65,10 @@ class Statistics:
         
         rolling_mean, rolling_std = Statistics.calculate_rolling_mean_std(series, window)
         
+        # Avoid division by zero and NaN
         z_score = (series - rolling_mean) / rolling_std
-        return z_score.replace([np.inf, -np.inf], np.nan).dropna()
+        z_score = z_score.replace([np.inf, -np.inf], np.nan)
+        
+        # Return clean z-scores without NaN at the beginning
+        z_score_clean = z_score.dropna()
+        return z_score_clean if len(z_score_clean) > 0 else z_score

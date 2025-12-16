@@ -100,12 +100,12 @@ class QuantAnalyticsApp:
                 logger.error(f"Error in resampling loop: {e}")
     
     async def analytics_loop(self):
-        logger.info("Analytics loop starting in 15 seconds...")
-        await asyncio.sleep(15)
+        logger.info("Analytics loop starting in 5 seconds...")
+        await asyncio.sleep(5)
         
         while self.running:
             try:
-                await asyncio.sleep(ANALYTICS_INTERVAL)
+                await asyncio.sleep(1.0)  # Run every 1 second instead of 500ms
                 
                 if len(self.symbols) < 2:
                     continue
@@ -116,41 +116,53 @@ class QuantAnalyticsApp:
                 prices_x = self.rolling_buffer.get_prices(symbol_x, limit=1000)
                 prices_y = self.rolling_buffer.get_prices(symbol_y, limit=1000)
                 
-                if len(prices_x) < DEFAULT_ROLLING_WINDOW or len(prices_y) < DEFAULT_ROLLING_WINDOW:
-                    logger.debug(f"Not enough prices: {symbol_x}={len(prices_x)}, {symbol_y}={len(prices_y)}")
+                if len(prices_x) < 10 or len(prices_y) < 10:
                     continue
                 
+                # Remove duplicates
                 prices_x = prices_x[~prices_x.index.duplicated(keep='last')]
                 prices_y = prices_y[~prices_y.index.duplicated(keep='last')]
                 
-                prices_x = prices_x.iloc[-500:]
-                prices_y = prices_y.iloc[-500:]
+                # Use recent data for calculation
+                prices_x = prices_x.iloc[-200:]
+                prices_y = prices_y.iloc[-200:]
+                
+                # Calculate with adaptive window size
+                window = min(DEFAULT_ROLLING_WINDOW, len(prices_x) // 2)
+                if window < 5:
+                    continue
                 
                 analytics = SpreadAnalytics.calculate_pair_analytics(
-                    prices_x, prices_y, DEFAULT_ROLLING_WINDOW
+                    prices_x, prices_y, window
                 )
                 
-                if analytics:
-                    db = SessionLocal()
-                    
-                    AnalyticsRepository.insert_analytics(
-                        db=db,
-                        symbol_x=symbol_x,
-                        symbol_y=symbol_y,
-                        timeframe='tick',
-                        hedge_ratio=analytics.get('hedge_ratio'),
-                        spread=analytics.get('spread_last'),
-                        z_score=analytics.get('z_score_last'),
-                        rolling_corr=analytics.get('correlation'),
-                        adf_stat=analytics.get('adf_statistic'),
-                        p_value=analytics.get('adf_p_value'),
-                        computed_at=int(time.time() * 1000)
-                    )
-                    
-                    db.close()
-                    
-                    self.alert_engine.check_alerts(analytics)
-                    logger.info(f"✓ Analytics: z_score={analytics.get('z_score_last', 0):.2f}")
+                if analytics and (analytics.get('z_score_last') is not None or analytics.get('correlation') is not None):
+                    try:
+                        db = SessionLocal()
+                        
+                        AnalyticsRepository.insert_analytics(
+                            db=db,
+                            symbol_x=symbol_x,
+                            symbol_y=symbol_y,
+                            timeframe='tick',
+                            hedge_ratio=analytics.get('hedge_ratio'),
+                            spread=analytics.get('spread_last'),
+                            z_score=analytics.get('z_score_last'),
+                            rolling_corr=analytics.get('correlation'),
+                            adf_stat=analytics.get('adf_statistic'),
+                            p_value=analytics.get('adf_p_value'),
+                            computed_at=int(time.time() * 1000)
+                        )
+                        
+                        db.close()
+                        self.alert_engine.check_alerts(analytics)
+                        logger.debug(f"✓ Analytics saved: Z={analytics.get('z_score_last'):.2f}, Corr={analytics.get('correlation'):.2f}")
+                    except Exception as db_error:
+                        logger.error(f"Database error saving analytics: {db_error}")
+                        try:
+                            db.close()
+                        except:
+                            pass
             
             except Exception as e:
                 logger.error(f"Error in analytics loop: {e}")
@@ -177,12 +189,15 @@ async def startup_event():
     
     # Start the Streamlit dashboard in a subprocess
     dashboard_path = os.path.join(os.path.dirname(__file__), "frontend", "dashboard.py")
-    dashboard_process = subprocess.Popen(
-        ["streamlit", "run", dashboard_path, f"--server.port={DASHBOARD_PORT}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    logger.info(f"Dashboard started on http://localhost:{DASHBOARD_PORT}")
+    try:
+        dashboard_process = subprocess.Popen(
+            ["streamlit", "run", dashboard_path, f"--server.port={DASHBOARD_PORT}", "--logger.level=warning"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        logger.info(f"Dashboard started on http://localhost:{DASHBOARD_PORT}")
+    except Exception as e:
+        logger.error(f"Failed to start dashboard: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():

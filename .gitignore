@@ -7,3 +7,4 @@ debug_data.py
 .DS_Store
 market_data.db
 data/
+clean.py

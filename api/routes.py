@@ -48,6 +48,24 @@ def get_analytics(symbol_x: str, symbol_y: str, timeframe: str,
     analytics = AnalyticsRepository.get_recent_analytics(db, symbol_x, symbol_y, timeframe, limit)
     return analytics
 
+@router.get("/analytics-debug/{symbol_x}/{symbol_y}")
+def get_analytics_debug(symbol_x: str, symbol_y: str, db: Session = Depends(get_db)):
+    """Debug endpoint to check what analytics are stored"""
+    try:
+        analytics_tick = AnalyticsRepository.get_recent_analytics(db, symbol_x, symbol_y, 'tick', limit=5)
+        return {
+            "status": "success",
+            "symbol_x": symbol_x,
+            "symbol_y": symbol_y,
+            "count": len(analytics_tick),
+            "records": [dict(a) if hasattr(a, '__dict__') else a for a in analytics_tick[:2]]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
 @router.post("/alerts", response_model=AlertResponse)
 def create_alert(alert: AlertCreate, db: Session = Depends(get_db)):
     new_alert = AlertRepository.create_alert(db, alert.metric, alert.condition, alert.threshold)
