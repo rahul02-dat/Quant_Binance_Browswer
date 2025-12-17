@@ -79,7 +79,6 @@ quant_analytics_app/
 - **Error Handling**: Comprehensive logging and graceful error recovery
 
 ## 🏗️ Architecture
-![Diagram](<diagrams/Architectural flow.png>)
 
 ### Data Flow
 
